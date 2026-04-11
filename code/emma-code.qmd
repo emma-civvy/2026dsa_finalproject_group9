@@ -1,0 +1,174 @@
+---
+title: "Emma Code"
+format: html
+---
+
+# Corn Dataset Exploration
+
+## Load packages
+
+```{r}
+library(tidyverse)
+library(janitor)
+```
+
+## Load Data
+
+```{r}
+soil <- read_csv("../data/training/training_soil.csv")
+
+trait <- read_csv("../data/training/training_trait.csv")
+
+meta <- read_csv("../data/training/training_meta.csv")
+
+length(unique(trait$site)) # number of site IDs in trait data
+length(unique(meta$site)) # number of site IDs in meta
+
+trait_unique_sites <- trait %>% 
+  filter(!(site %in% meta$site)) %>% 
+  group_by(site) %>% 
+  summarize(n=n()) # all the sites in TRAIT that arent in META
+
+meta_unique_sites <- meta %>% 
+  filter(!(site %in% trait$ site)) %>% 
+  group_by(site) %>% 
+  summarize(n=n())
+
+# interesting - some sites have special labels that aren't used in other dataframes...should we keep the crazy trait names? Or the simple names?
+
+# In my opinion - get rid of the crazy names and just have first four digits.
+
+```
+
+# Cleaning up data
+
+```{r}
+soil <- soil %>% 
+  mutate(site = substr(site, 1, 4)) 
+
+names(trait)
+
+trait <- trait %>% 
+  mutate(site = substr(site, 1, 4)) %>% # are the date columns that important?
+  mutate(date_planted = mdy(date_planted),
+         date_harvested = mdy(date_harvested)) %>% 
+  mutate(month_planted = month(date_planted,
+                               label = TRUE),
+         month_harvested = month(date_harvested,
+                                 label = TRUE)) %>% 
+  select(-c("date_planted",
+            "date_harvested"))
+  
+
+meta <- meta %>% 
+  mutate(site = substr(site, 1, 4)) %>%  # i want to get rid of prev crop
+  select(-previous_crop)
+
+
+```
+
+# Combine datasets
+
+```{r}
+## check duplicates
+meta %>% count(site, year) %>% filter(n > 1)
+soil %>% count(site, year) %>% filter(n > 1)
+
+## resolve duplicates
+meta_clean <- meta %>% distinct(site, year, .keep_all = TRUE)
+soil_clean <- soil %>% distinct(site, year, .keep_all = TRUE)
+ 
+## join datasets
+full <- trait %>% 
+  left_join(soil_clean, 
+            by = c("site", "year")) %>% 
+  left_join(meta_clean, 
+            by = c("site", "year")) ## warning - all years in trait aren't necessarily represented in meta and soil.
+
+```
+
+# Visual Explorations
+
+## Boxplots
+
+```{r}
+full <- full %>% 
+  mutate(year = factor(year),
+         replicate = factor(replicate),
+         block = factor(block))
+
+num.pred <- full %>% 
+  select(where(is.numeric))
+
+for (col in names(num.pred)) {
+  y <- num.pred[[col]]
+  boxplot(y,
+          main = col)
+}
+
+```
+
+## Stratified boxplots
+
+```{r by site}
+
+for (col in names(num.pred)) {
+  y <- num.pred[[col]]
+  print(ggplot(data = full,
+         aes(x = site,
+             y = .data[[col]]))+
+    geom_boxplot()+
+    ggtitle(col)+
+    theme(axis.text.x = element_text(angle = 45)))
+}
+
+```
+
+```{r by year}
+for (col in names(num.pred)) {
+  y <- num.pred[[col]]
+  print(ggplot(data = full,
+         aes(x = year,
+             y = .data[[col]]))+
+    geom_boxplot()+
+    ggtitle(col)+
+    theme(axis.text.x = element_text(angle = 45)))
+}
+
+```
+
+```{r by hybrid - lol don't try this unless you want to a rothko}
+# for (col in names(num.pred)) {
+#   y <- num.pred[[col]]
+#   print(ggplot(data = full,
+#          aes(x = hybrid,
+#              y = .data[[col]]))+
+#     geom_boxplot()+
+#     ggtitle(col)+
+#     theme(axis.text.x = element_text(angle = 45)))
+# }
+
+```
+
+# Linear regs
+
+```{r}
+
+for (col in names(num.pred)) {
+  y <- num.pred[[col]]
+  print(ggplot(data = full,
+         aes(x = yield_mg_ha,
+             y = .data[[col]]))+
+    geom_point()+
+    geom_smooth()+
+    ggtitle(col)+
+    theme(axis.text.x = element_text(angle = 45)))
+}
+```
+
+# Save data
+
+```{r}
+write_csv(full, "../data/testing/combined.csv")
+```
+
