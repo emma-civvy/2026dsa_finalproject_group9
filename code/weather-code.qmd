@@ -1,0 +1,163 @@
+---
+title: "weather-code"
+format: html
+editor: visual
+---
+
+#Setup
+
+##Load packages
+
+```{r}
+#| message: false
+#| warning: false
+
+library(tidyverse)
+library(daymetr)
+```
+
+##Load data
+
+```{r}
+data <- read_csv("../data/training/combined.csv")
+data
+```
+
+##Number of coordinates & sites
+
+```{r}
+data %>%
+  distinct(longitude, latitude) # distinct coordinates
+```
+
+```{r}
+data %>%
+  distinct(site) # number of distinct sites
+```
+
+##Removing NAs
+
+```{r}
+data_clean <- data %>%
+  filter(!is.na(latitude), !is.na(longitude)) #filtering out NA values to pull daymet data
+data_clean
+```
+
+```{r}
+unique_sites <- data_clean %>% 
+  distinct(site, year, latitude, longitude) %>% #selecting unique coordinates & sites to be able to pull from daymet
+  filter(site != "GEH1") #this location is outside of US, so couldn't pull daymet
+unique_sites
+```
+
+#Daymet - extracting weather data 
+##One year
+
+```{r}
+daymet_one <- download_daymet(site = unique_sites$site[1], #testing pulling data from daymet
+                              lat = unique_sites$latitude[1],
+                              lon = unique_sites$longitude[1],
+                              start = unique_sites$year[1],
+                              end = unique_sites$year[1],
+                              simplify = T)
+daymet_one
+```
+
+##All site years
+
+```{r}
+daymet_all <- unique_sites %>% #extracting weather data from daymet
+  mutate(weather = pmap(list(.y = year,
+                             .site = site,
+                             .lat = latitude,
+                             .lon = longitude),
+                        function(.y, .site, .lat, .lon)
+                          download_daymet(site = .site,
+                                          lat = .lat,
+                                          lon = .lon,
+                                          start = .y,
+                                          end = .y,
+                                          simplify = T,
+                                          silent = T) %>%
+                          rename(.year = year,
+                                 .site = site)
+                          ))
+daymet_all
+```
+
+```{r}
+#unique_sites %>%
+  #slice(123) #figuring out why there was an error with daymet
+```
+
+```{r}
+daymet_all_unnest <- daymet_all %>% #unnesting
+  rename(lat = latitude, lon = longitude) %>%
+  unnest(weather) %>%
+  pivot_wider(names_from = measurement,
+              values_from = value) %>%
+  janitor::clean_names() %>%
+  select(site, year, latitude, longitude, yday, dayl_s, prcp_mm_day, srad_w_m_2, swe_kg_m_2, tmax_deg_c, tmin_deg_c, vp_pa)
+
+daymet_all_unnest
+```
+
+```{r}
+daymet_month <- daymet_all_unnest %>% #adding month column
+  # Creating a date class variable  
+  mutate(date_chr = paste0(year, "/", yday)) %>%
+  mutate(date = as.Date(date_chr, "%Y/%j")) %>%
+  # Extracting month from date  
+  mutate(month = month(date)) %>%
+  mutate(month_abb = month(date, label = T))
+daymet_month
+```
+
+```{r}
+daymet_month_sum <- daymet_month %>% #summarizing weather variables across month
+  group_by(year, site, latitude, longitude, month_abb) %>%
+  summarise(across(.cols = c(dayl_s,
+                             srad_w_m_2,
+                             tmax_deg_c,
+                             tmin_deg_c,
+                             vp_pa),
+                   .fns = mean,
+                   .names = "mean_{.col}"),
+            across(.cols = prcp_mm_day,
+                   .fns = sum,
+                   .names = "sum_{.col}")) %>%
+  ungroup()
+
+
+daymet_month_sum
+```
+
+```{r}
+final_daymet_monthsum <- data_clean %>%
+  left_join(daymet_month_sum, #joining weather data for each coordinate back to the original dataset
+            by = c("site", "year", "latitude", "longitude"))
+final_daymet_monthsum
+
+```
+
+```{r}
+daymet_year <- final_daymet_monthsum %>% #summarizing weather variables by year for each hybrid type
+  group_by(year, site, replicate, block, hybrid, yield_mg_ha, grain_moisture, month_planted, month_harvested, longitude, latitude, soilpH, om_pct, soilk_ppm, soilp_ppm) %>%
+  summarise(across(.cols = c(mean_dayl_s,
+                             mean_srad_w_m_2,
+                             mean_tmax_deg_c,
+                             mean_tmin_deg_c,
+                             mean_vp_pa),
+                   .fns = mean),
+            across(.cols = sum_prcp_mm_day,
+                   .fns = sum)) %>%
+  ungroup()
+daymet_year
+```
+
+```{r}
+write_csv(daymet_year,
+          "../data/training/weatheryearcombined.csv")
+```
+
+
