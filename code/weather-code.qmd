@@ -50,8 +50,7 @@ unique_sites <- data_clean %>%
 unique_sites
 ```
 
-#Daymet - extracting weather data 
-##One year
+#Daymet - extracting weather data ##One year
 
 ```{r}
 daymet_one <- download_daymet(site = unique_sites$site[1], #testing pulling data from daymet
@@ -159,5 +158,3 @@ daymet_year
 write_csv(daymet_year,
           "../data/training/weatheryearcombined.csv")
 ```
-
-

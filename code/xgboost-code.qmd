@@ -1,0 +1,146 @@
+---
+title: "xgboost-code"
+format: html
+editor: visual
+---
+#Setup
+```{r}
+#| message: false
+#| warning: false
+
+library(tidymodels)
+library(finetune)
+library(vip)
+library(xgboost)
+library(ranger)
+library(tidyverse)
+library(doParallel)
+```
+
+#Load data
+```{r}
+corn <- read_csv("../data/training/weatheryearcombined.csv")
+corn
+```
+
+```{r}
+#corn %>% #looking at data/variables by year
+  #filter(year == 2023)
+```
+
+```{r}
+#corn %>% #looking at how many unique hybrids
+  #distinct(hybrid)
+```
+
+
+#Pre-processing 
+##Data split
+```{r corn split}
+set.seed(931735) #setting seed so its reproducible
+
+corn_split <- initial_split(corn,
+                            prop = .7, #just using 70/30 split
+                            strata = yield_mg_ha) #stratifying by target variable
+corn_split
+```
+
+```{r corn train}
+corn_train <- training(corn_split)
+corn_train
+```
+
+```{r corn test}
+corn_test <- testing(corn_split)
+corn_test
+```
+
+##Distribution of yield
+```{r}
+ggplot() +
+  geom_density(data = corn_train, 
+               aes(x = yield_mg_ha),
+               color = "red") +
+  geom_density(data = corn_test, 
+               aes(x = yield_mg_ha),
+               color = "blue") 
+```
+
+##Data processing with recipe
+```{r corn recipe}
+corn_recipe <- recipe(yield_mg_ha ~ ., data = corn_train) %>% #creating recipe for preprocessing
+  step_rm(replicate, #removing these because I was getting an error since these are all non-numerical
+          block,
+          year,
+          site,
+          hybrid,
+          month_planted,
+          month_harvested)
+corn_recipe
+```
+
+```{r corn prep}
+corn_prep <- corn_recipe %>% #prepping recipe
+  prep()
+corn_prep
+```
+
+#Training
+##Model specification
+```{r}
+xgb_spec <- 
+  boost_tree(
+   #number of boosting iterations
+    trees = tune(), #optimizing hyperparameter
+         #maxximum depth of each tree
+    tree_depth = tune(),
+             #minimum samples required to split a node
+    min_n = tune(),
+        #step size shrinkage for each boosting step
+    learn_rate = tune()) %>%
+        #specify engine 
+    set_engine("xgboost") %>%
+       #set mode
+    set_mode("regression")
+
+xgb_spec
+```
+
+##Cross validation
+```{r}
+set.seed(235)
+resampling_foldcv <- vfold_cv(corn_train,
+                              v = 10) #10 fold cross validation
+resampling_foldcv
+resampling_foldcv$splits[[1]]
+```
+
+##Hyperparameter grid
+```{r}
+xgb_grid <- grid_latin_hypercube(
+  tree_depth(), #hyperparameters
+  min_n(),
+  learn_rate(),
+  trees(),
+  size = 100 #combinations of hyperparameters
+)
+
+xgb_grid
+```
+
+##Model tuning
+```{r}
+set.seed(76544)
+registerDoParallel(cores = parallel::detectCores() - 1)
+
+xgb_res <- tune_race_anova(object = xgb_spec,
+                      preprocessor = corn_recipe,
+                      resamples = resampling_foldcv,
+                      grid = xgb_grid,
+                      control = control_race(save_pred = TRUE))
+
+stopImplicitCluster()
+
+xgb_res$.metrics[[2]]
+```
+
