@@ -128,7 +128,7 @@ xgb_grid <- grid_latin_hypercube(
 xgb_grid
 ```
 
-##Model tuning
+#Model tuning
 ```{r}
 set.seed(76544)
 registerDoParallel(cores = parallel::detectCores() - 1)
@@ -142,5 +142,162 @@ xgb_res <- tune_race_anova(object = xgb_spec,
 stopImplicitCluster()
 
 xgb_res$.metrics[[2]]
+```
+
+```{r}
+plot_race(xgb_res)
+```
+
+#Selecting best model
+##RMSE
+```{r}
+best_rmse <- xgb_res %>% #lowest rmse
+  select_best(metric = "rmse")%>% 
+  mutate(source = "best_rmse")
+
+best_rmse
+```
+```{r}
+best_rmse_pct_loss <- xgb_res %>% #best rmse within 1% loss
+  select_by_pct_loss("min_n",
+                     metric = "rmse",
+                     limit = 1
+                     )%>% 
+  mutate(source = "best_rmse_pct_loss")
+
+best_rmse_pct_loss
+```
+```{r}
+best_rmse_one_std_err <- xgb_res %>% #best rmse within 1 SE
+  select_by_one_std_err(metric = "rmse",
+                        eval_time = 100,
+                        trees
+                        )%>% 
+  mutate(source = "best_rmse_one_std_err")
+
+best_rmse_one_std_err
+```
+
+##R2
+```{r}
+best_r2 <- xgb_res %>% #greatest R2
+  select_best(metric = "rsq")%>% 
+  mutate(source = "best_r2")
+
+best_r2
+```
+
+```{r}
+best_r2_pct_loss <- xgb_res %>% #lower R2 within 1% loss
+  select_by_pct_loss("min_n",
+                     metric = "rsq",
+                     limit = 1
+                     ) %>% 
+  mutate(source = "best_r2_pct_loss")
+
+best_r2_pct_loss
+```
+
+```{r}
+best_r2_one_std_error <- xgb_res %>% #lowest R2 within 1 SE
+  select_by_one_std_err(metric = "rsq",
+                        eval_time = 100,
+                        trees
+                        ) %>%
+  mutate(source = "best_r2_one_std_error")
+
+best_r2_one_std_error
+```
+
+##Compare and finalize model
+```{r}
+best_rmse %>% 
+  bind_rows(best_rmse_pct_loss, 
+            best_rmse_one_std_err, 
+            best_r2, 
+            best_r2_pct_loss, 
+            best_r2_one_std_error)
+```
+#Final Specification
+```{r}
+final_spec <- boost_tree(
+  trees = best_rmse_pct_loss$trees,           # Number of boosting rounds (trees)
+  tree_depth = best_rmse_pct_loss$tree_depth, # Maximum depth of each tree
+  min_n = best_rmse_pct_loss$min_n,           # Minimum number of samples to split a node
+  learn_rate = best_rmse_pct_loss$learn_rate  # Learning rate (step size shrinkage)
+) %>%
+  set_engine("xgboost") %>%
+  set_mode("regression")
+
+final_spec
+```
+
+#Validation
+```{r}
+set.seed(10)
+final_fit <- last_fit(final_spec,
+                corn_recipe,
+                split = corn_split)
+
+final_fit %>%
+  collect_predictions()
+```
+
+#Evaluate on test set
+```{r}
+final_fit %>%
+  collect_metrics()
+```
+
+#Evaluate on training set
+```{r}
+final_spec %>%
+  fit(yield_mg_ha ~ .,
+      data = bake(corn_prep, 
+                  corn_train)) %>%
+  augment(new_data = bake(corn_prep, 
+                          corn_train)) %>% 
+  rmse(yield_mg_ha, .pred) %>%
+  bind_rows(
+    
+    
+# R2
+final_spec %>%
+  fit(yield_mg_ha ~ .,
+      data = bake(corn_prep, 
+                  corn_train)) %>%
+  augment(new_data = bake(corn_prep, 
+                          corn_train)) %>% 
+  rsq(yield_mg_ha, .pred))
+```
+
+#Predicted vs observed plot
+```{r}
+final_fit %>%
+  collect_predictions() %>%
+  ggplot(aes(x = yield_mg_ha,
+             y = .pred)) +
+  geom_point() +
+  geom_abline() +
+  geom_smooth(method = "lm") +
+  scale_x_continuous(limits = c(0, 20)) +
+  scale_y_continuous(limits = c(0, 20)) 
+```
+
+#Variable Importance
+```{r}
+final_spec %>%
+  fit(yield_mg_ha ~ .,
+         data = bake(corn_prep, corn_train)) %>% #There little change in variable improtance if you use full dataset
+    vi() %>%
+  mutate(
+    Variable = fct_reorder(Variable, 
+                           Importance)
+  ) %>%
+  ggplot(aes(x = Importance, 
+             y = Variable)) +
+  geom_col() +
+  scale_x_continuous(expand = c(0, 0)) +
+  labs(y = NULL)
 ```
 
