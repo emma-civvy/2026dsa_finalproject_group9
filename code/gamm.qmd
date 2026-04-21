@@ -1,0 +1,246 @@
+---
+title: "test"
+format: html
+---
+# Load Packages
+
+```{r}
+library(tidymodels)   # Core framework for modeling (includes recipes, workflows, parsnip, etc.)
+library(mgcv)
+library(finetune)     # Additional tuning strategies (e.g., racing, ANOVA-based tuning)
+library(vip)          # For plotting variable importance from fitted models
+library(ranger)       # Fast implementation of Random Forests
+library(tidyverse)    # Data wrangling and visualization
+library(doParallel)   # For parallel computing (useful during resampling/tuning)
+
+```
+
+# Load Data
+
+```{r corn_weather}
+corn_weather <- read_csv("../data/training/weatheryearcombined.csv")
+
+corn_weather
+
+corn <- corn_weather %>%
+  mutate(
+    hybrid = as.factor(hybrid),
+    site = as.factor(site)
+  ) 
+  
+```
+
+# Split
+
+```{r}
+set.seed(123)
+
+corn_split <- initial_split(corn, prop = 0.7)
+
+corn_train <- training(corn_split)
+
+corn_test  <- testing(corn_split)
+```
+
+# Model Specification
+
+```{r}
+gam_spec <- gen_additive_mod() %>%
+  set_engine("mgcv", method = "REML") %>%
+  set_mode("regression")
+
+```
+
+tidymodels can't use a recipe AND a formula at the same time but GAMMs must include a formula...so bypass the recipe?
+
+# Training and Comparing
+
+```{r model 1 - core}
+
+gam_fit1 <- gam_spec %>%
+  fit(
+    yield_mg_ha ~ 
+      s(mean_tmax_deg_c, bs = "cs") +
+      s(sum_prcp_mm_day, bs = "cs") +
+      s(grain_moisture, bs = "cs"),
+    data = corn_train
+  )
+
+##
+
+preds1 <- predict(gam_fit1, corn_test) %>%
+  bind_cols(corn_test)
+
+preds1
+
+##
+
+mets1 <- metrics(preds1, truth = yield_mg_ha, estimate = .pred)
+mets1
+
+```
+
+```{r model 2 - soil variables}
+names(corn_train)
+
+gam_fit2 <- gam_spec %>%
+  fit(
+    yield_mg_ha ~ 
+      s(mean_tmax_deg_c, bs = "cs") +
+      s(sum_prcp_mm_day, bs = "cs") +
+      s(soilpH, bs = "cs") +
+      s(om_pct, bs = "cs") +
+      s(soilk_ppm, bs = "cs") +
+      s(soilp_ppm, bs = "cs")+
+      s(grain_moisture, bs = "cs"),
+    data = corn_train
+  )
+
+##
+
+preds2 <- predict(gam_fit2, corn_test) %>%
+  bind_cols(corn_test)
+
+preds2
+
+##
+
+mets2 <- metrics(preds2, truth = yield_mg_ha, estimate = .pred)
+mets2
+```
+
+```{r model 3 - secondary weather variables}
+names(corn_train)
+
+gam_fit3 <- gam_spec %>%
+  fit(
+    yield_mg_ha ~ 
+      s(mean_tmax_deg_c, bs = "cs") +
+      s(sum_prcp_mm_day, bs = "cs") +
+      s(soilpH, bs = "cs") +
+      s(om_pct, bs = "cs") +
+      s(soilk_ppm, bs = "cs") +
+      s(soilp_ppm, bs = "cs") +
+      s(mean_srad_w_m_2, bs = "cs") +
+      s(mean_vp_pa, bs = "cs") +
+      s(grain_moisture, bs = "cs"),
+    data = corn_train
+  )
+
+##
+sum(is.na(preds3)) 
+
+##
+
+preds3 <- predict(gam_fit3, 
+                  corn_test) %>%
+  bind_cols(corn_test) # compare against training or testing data?
+
+preds3
+
+##
+
+mets3 <- metrics(preds3, 
+                 truth = yield_mg_ha, 
+                 estimate = .pred)
+
+mets3
+
+```
+
+```{r - can we do hybrid AT ALL?}
+# gam_fit3 <- gam_spec %>%
+#   fit(
+#     yield_mg_ha ~ 
+#      hybrid,
+#     data = corn_train
+#   )
+# 
+beepr::beep()
+
+```
+
+# Assessments
+
+```{r model assessments}
+model_results <- bind_rows(
+  mets1 %>% mutate(model = "Model 1"),
+  mets2 %>% mutate(model = "Model 2 + soil"),
+  mets3 %>% mutate(model = "Model 3 + weather")
+) %>% 
+  select(model,
+         .metric,
+         .estimate)
+
+model_results
+
+## most inclusive model is best
+
+```
+
+```{r training v testing}
+# Training predictions
+train_preds <- predict(gam_fit3,
+                       corn_train) %>% 
+  bind_cols(corn_train)
+
+metrics(train_preds,
+        truth = yield_mg_ha,
+        estimate = .pred)
+
+# rmse = 2.45
+# rsq = 0.37
+
+mets3
+# rmse = 2.42
+# rsq = 0.38
+
+## Pretty close.
+
+```
+
+```{r Final fit}
+
+corn_full <- bind_rows(corn_train, corn_test)
+
+final_gam <- gam_spec %>% 
+  fit(
+    yield_mg_ha ~ 
+      s(mean_tmax_deg_c, bs = "cs") +
+      s(sum_prcp_mm_day, bs = "cs") +
+      s(soilpH, bs = "cs") +
+      s(om_pct, bs = "cs") +
+      s(soilk_ppm, bs = "cs") +
+      s(soilp_ppm, bs = "cs") +
+      s(mean_srad_w_m_2, bs = "cs") +
+      s(mean_vp_pa, bs = "cs") +
+      s(grain_moisture, bs = "cs"),
+    data = corn_full)
+  
+full_preds <- predict(final_gam,
+                       corn_full) %>% 
+  bind_cols(corn_full)
+
+metrics(full_preds,
+        truth = yield_mg_ha,
+        estimate = .pred)
+
+```
+
+```{r Obs v Pred Plot}
+ggplot(data = full_preds,
+       aes(x = yield_mg_ha,
+           y = .pred))+
+  geom_point(alpha = 0.3)+
+  geom_abline() +
+  geom_smooth(method = "lm") 
+  
+
+```
+
+```{r GAMM interpretation}
+summary(final_gam$fit)
+plot(final_gam$fit, pages = 1)
+
+```
+
