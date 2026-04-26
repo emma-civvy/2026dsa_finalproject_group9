@@ -1,70 +1,74 @@
 ---
-title: "weather-code"
+title: "test data wrangling"
 format: html
 editor: visual
 ---
 
 #Setup
-
-##Load packages
-
 ```{r}
 #| message: false
 #| warning: false
-
 library(tidyverse)
+library(janitor)
 library(daymetr)
 ```
 
-##Load data
-
+#Load data
 ```{r}
-data <- read_csv("../data/training/combined.csv")
-data
+#| message: false
+#| warning: false
+meta <- read_csv("../2026dsa_finalproject_group9/data/testing/testing_meta.csv")
+
+soil <- read_csv("../2026dsa_finalproject_group9/data/testing/testing_soil.csv")
+
+submission <- read_csv("../2026dsa_finalproject_group9/data/testing/testing_submission.csv")
+
 ```
 
-##Number of coordinates & sites
-
+#Clean data
+##Meta
 ```{r}
-data %>%
+meta <- meta %>% 
+  mutate(site = substr(site, 1, 4)) %>%  # removing previous crop
+  select(-previous_crop) 
+
+meta_clean <- meta %>%
+  distinct(site, year, .keep_all = TRUE)
+```
+
+##Soil
+```{r}
+soil_clean <- soil %>% 
+  mutate(site = substr(site, 1, 4)) %>% 
+  distinct(site, year, .keep_all = TRUE)
+```
+
+#Join datasets
+```{r}
+full_dataset <- submission %>%
+  left_join(soil_clean, 
+            by = c("site", "year")) %>% 
+  left_join(meta_clean, 
+            by = c("site", "year"))
+```
+
+#Add weather data
+```{r}
+full_dataset %>%
   distinct(longitude, latitude) # distinct coordinates
 ```
 
 ```{r}
-data %>%
-  distinct(site) # number of distinct sites
-```
-
-##Removing NAs
-
-```{r}
-data_clean <- data %>%
-  filter(!is.na(latitude), !is.na(longitude)) #filtering out NA values to pull daymet data
-data_clean
+full_dataset %>%
+  distinct(site) #number of distinct sites
 ```
 
 ```{r}
-unique_sites <- data_clean %>% 
-  distinct(site, year, latitude, longitude) %>% #selecting unique coordinates & sites to be able to pull from daymet
-  filter(site != "GEH1") #this location is outside of US, so couldn't pull daymet
+unique_sites <- full_dataset %>% 
+  distinct(site, year, latitude, longitude) #selecting unique coordinates & sites to be able to pull from daymet
 unique_sites
 ```
-
-#Daymet - extracting weather data 
-##One year
-
-```{r}
-daymet_one <- download_daymet(site = unique_sites$site[1], #testing pulling data from daymet
-                              lat = unique_sites$latitude[1],
-                              lon = unique_sites$longitude[1],
-                              start = unique_sites$year[1],
-                              end = unique_sites$year[1],
-                              simplify = T)
-daymet_one
-```
-
-##All site years
-
+##Pulling from daymet
 ```{r}
 daymet_all <- unique_sites %>% #extracting weather data from daymet
   mutate(weather = pmap(list(.y = year,
@@ -83,11 +87,6 @@ daymet_all <- unique_sites %>% #extracting weather data from daymet
                                  .site = site)
                           ))
 daymet_all
-```
-
-```{r}
-#unique_sites %>%
-  #slice(123) #figuring out why there was an error with daymet
 ```
 
 ```{r}
@@ -133,16 +132,15 @@ daymet_month_sum
 ```
 
 ```{r}
-final_daymet_monthsum <- data_clean %>%
+final_daymet_monthsum <- full_dataset %>%
   left_join(daymet_month_sum, #joining weather data for each coordinate back to the original dataset
             by = c("site", "year", "latitude", "longitude"))
 final_daymet_monthsum
-
 ```
 
 ```{r}
 daymet_year <- final_daymet_monthsum %>% #summarizing weather variables by year for each hybrid type
-  group_by(year, site, replicate, block, hybrid, yield_mg_ha, grain_moisture, month_planted, month_harvested, longitude, latitude, soilpH, om_pct, soilk_ppm, soilp_ppm) %>%
+  group_by(year, site, hybrid, yield_mg_ha, longitude, latitude, soilpH, om_pct, soilk_ppm, soilp_ppm) %>%
   summarise(across(.cols = c(mean_dayl_s,
                              mean_srad_w_m_2,
                              mean_tmax_deg_c,
@@ -154,8 +152,8 @@ daymet_year <- final_daymet_monthsum %>% #summarizing weather variables by year 
   ungroup()
 daymet_year
 ```
-
 ```{r}
 write_csv(daymet_year,
-          "../data/training/weatheryearcombined.csv")
+          "../2026dsa_finalproject_group9/data/testing/weathercombinedtest.csv")
 ```
+

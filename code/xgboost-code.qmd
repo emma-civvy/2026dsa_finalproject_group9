@@ -19,7 +19,8 @@ library(doParallel)
 
 #Load data
 ```{r}
-corn <- read_csv("../data/training/weatheryearcombined.csv")
+corn <- read_csv("../data/training/weatheryearcombined.csv") %>%
+  select(-replicate, -block, -grain_moisture, -month_planted, -month_harvested)
 corn
 ```
 
@@ -69,13 +70,9 @@ ggplot() +
 ##Data processing with recipe
 ```{r corn recipe}
 corn_recipe <- recipe(yield_mg_ha ~ ., data = corn_train) %>% #creating recipe for preprocessing
-  step_rm(replicate, #removing these because I was getting an error since these are all non-numerical
-          block,
-          year,
+  step_rm(year, #removing these because I was getting an error since these are all non-numerical
           site,
-          hybrid,
-          month_planted,
-          month_harvested)
+          hybrid)
 corn_recipe
 ```
 
@@ -110,7 +107,7 @@ xgb_spec
 ```{r}
 set.seed(235)
 resampling_foldcv <- vfold_cv(corn_train,
-                              v = 10) #10 fold cross validation
+                              v = 5) #10 fold cross validation
 resampling_foldcv
 resampling_foldcv$splits[[1]]
 ```
@@ -299,5 +296,16 @@ final_spec %>%
   geom_col() +
   scale_x_continuous(expand = c(0, 0)) +
   labs(y = NULL)
+```
+#Predicting yield
+##Load testing dataset
+```{r}
+test_combined_data <- read_csv("../data/testing/weathercombinedtest.csv")
+test_combined_data
+```
+```{r}
+predict_mod <- extract_workflow(final_fit) #tried predicting using final fit but it came back with an error and said to do extract workflow then use that output to predict
+
+yield_preds<- predict(predict_mod, test_combined_data)
 ```
 
