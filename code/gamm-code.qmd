@@ -1,0 +1,291 @@
+---
+title: "gamm-code"
+format: html
+---
+
+# Load Packages
+
+```{r}
+#| message: false
+#| warning: false
+#| 
+library(tidymodels)   # Core framework for modeling (includes recipes, workflows, parsnip, etc.)
+library(mgcv)
+library(finetune)     # Additional tuning strategies (e.g., racing, ANOVA-based tuning)
+library(vip)          # For plotting variable importance from fitted models
+library(ranger)       # Fast implementation of Random Forests
+library(tidyverse)    # Data wrangling and visualization
+library(doParallel)   # For parallel computing (useful during resampling/tuning)
+
+```
+
+# Load Data
+
+```{r corn_weather}
+corn_weather <- read_csv("../data/training/weatheryearcombined.csv")
+
+corn_weather
+
+corn <- corn_weather %>%
+  mutate(
+    hybrid = as.factor(hybrid),
+    site = as.factor(site)
+  ) 
+  
+```
+
+# Split
+
+```{r}
+set.seed(123)
+
+corn_small <- corn %>%
+  group_by(site) %>%
+  slice_sample(n = 200) %>%
+  ungroup()
+
+corn_split <- initial_split(corn_small, prop = 0.7)
+
+corn_train <- training(corn_split)
+
+corn_test  <- testing(corn_split)
+```
+
+# Model Specification
+
+```{r gam spec}
+gam_spec <- gen_additive_mod(
+  select_features = tune(),
+  adjust_deg_free = tune()
+) %>%
+  set_engine("mgcv", method = "REML") %>%
+  set_mode("regression")
+```
+
+```{r gam recipe}
+gam_train_recipe <- recipe(
+  yield_mg_ha ~ .,
+  data = corn_train
+) %>% 
+  step_rm(year,
+          site,
+          replicate,
+          block,
+          month_planted,
+          month_harvested,
+          longitude,
+          latitude) %>% 
+   step_dummy(all_nominal_predictors()) %>%
+  step_impute_median(soilpH,
+                     om_pct,
+                     soilk_ppm,
+                     soilp_ppm) 
+  
+gam_train_recipe
+
+train_prep <- gam_train_recipe %>% 
+  prep()
+
+train_bake <- bake(train_prep,
+                   corn_train)
+
+```
+
+# Workflow
+
+```{r gam workflow }
+gam_wf <- workflow() %>% 
+  # add_recipe(gam_recipe) %>% 
+  add_model(gam_spec,
+            formula = yield_mg_ha ~ 
+      s(mean_tmax_deg_c, bs = "cs") +
+      s(sum_prcp_mm_day, bs = "cs") +
+      s(soilpH, bs = "cs") +
+      s(om_pct, bs = "cs") +
+      s(soilk_ppm, bs = "cs") +
+      s(soilp_ppm, bs = "cs") +
+      s(mean_srad_w_m_2, bs = "cs") +
+      s(mean_vp_pa, bs = "cs") +
+      s(grain_moisture, bs = "cs")) %>% 
+  add_variables(predictors = c(everything()),
+                outcomes = yield_mg_ha)
+  
+
+gam_wf
+```
+# Model Tuning
+
+```{r CV Fold}
+set.seed(75)
+
+resampling_foldcv <- vfold_cv(train_bake,
+                              v = 10)
+
+resampling_foldcv
+resampling_foldcv$splits[[1]]
+
+gam_grid <- crossing(
+  select_features = c(TRUE,FALSE),
+  adjust_deg_free = c(1, 2, 3, 4) # make larger values. test on subset. 
+)
+
+
+gam_res <- tune_grid(
+  gam_wf,
+  resamples = resampling_foldcv,
+  grid = gam_grid,
+  metric = metric_set(rmse, rsq)
+)
+
+collect_metrics(gam_res)
+
+show_best(gam_res,
+          metric = "rmse")
+
+```
+
+
+```{r select best}
+best_params <- select_best(gam_res, 
+                           metric = "rmse") ## FALSE / 1
+
+## best rmse within 1% loss
+
+best_rmse_pct_loss <- gam_res %>% 
+  select_by_pct_loss("min_n",
+                     metric = "rmse",
+                     limit = 1
+                     )%>% 
+  mutate(source = "best_rmse_pct_loss")
+
+best_rmse_pct_loss
+
+# best rmse within 1 SE
+
+best_rmse_one_std_err <- gam_res %>%
+  select_by_one_std_err(metric = "rmse",
+                        eval_time = 100,
+                        )%>% 
+  mutate(source = "best_rmse_one_std_err")
+
+best_rmse_one_std_err
+
+final_wf <- finalize_workflow(gam_wf, 
+                              best_params)
+
+```
+
+```{r Testing Performance }
+
+## Training
+final_train <- fit(final_wf,
+                       data = train_bake)
+
+train_preds <- predict(
+  final_train,
+  train_bake
+) %>% 
+  bind_cols(train_bake)
+
+metrics(train_preds,
+       truth = yield_mg_ha,
+       estimate = .pred
+       ) ## RMSE = 2.5 / rsq = 0.41
+
+```
+
+```{r Testing Performance }
+## Prep and bake testing
+
+gam_test_recipe <- recipe(
+  yield_mg_ha ~ .,
+  data = corn_test
+) %>% 
+  step_rm(year,
+          site,
+          replicate,
+          block,
+          month_planted,
+          month_harvested,
+          longitude,
+          latitude) %>% 
+   step_dummy(all_nominal_predictors()) %>%
+  step_impute_median(soilpH,
+                     om_pct,
+                     soilk_ppm,
+                     soilp_ppm) 
+  
+gam_test_recipe
+
+test_prep <- gam_test_recipe %>% 
+  prep()
+
+test_bake <- bake(test_prep,
+                   corn_test)
+
+
+## Testing
+
+final_test <- fit(final_wf,
+                       data = test_bake)
+
+test_preds <- predict(
+  final_test,
+  test_bake
+) %>% 
+  bind_cols(test_bake)
+
+metrics(test_preds,
+       truth = yield_mg_ha,
+       estimate = .pred
+       ) # RMSE = 2.5 / RSQ = 0.44
+
+
+```
+
+# Final Model
+
+```{r final fit}
+set.seed(950)
+
+final_fit <- last_fit(final_wf, 
+                      corn_split)
+
+collect_metrics(final_fit)
+```
+
+```{r Predicted vs Observed}
+
+final_fit %>%
+  collect_predictions() %>%
+  ggplot(aes(x = yield_mg_ha,
+             y = .pred)) +
+  geom_point() +
+  geom_abline() +
+  geom_smooth(method = "lm") +
+  scale_x_continuous(limits = c(0, 20)) +
+  scale_y_continuous(limits = c(0, 20)) 
+
+```
+
+```{r Variable Importance }
+gam_engine <- extract_fit_engine(final_fit)
+
+summary(gam_engine)
+
+summary(gam_engine)$s.table %>% 
+  as.data.frame() %>% 
+  rename("Importance" = "F") %>% 
+  rownames_to_column(var = "variable") %>% 
+  mutate(variable = str_replace_all(variable,
+                                    "^s\\(|\\)$", "")) %>% 
+  ggplot(aes(x = Importance,
+             y = reorder(variable,
+                         Importance)))+
+    geom_col() +
+  scale_x_continuous(expand = c(0, 0)) +
+  labs(y = NULL)
+
+
+```
+
