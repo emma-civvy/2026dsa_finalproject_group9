@@ -5,6 +5,7 @@ editor: visual
 ---
 
 #Setup
+
 ```{r}
 #| message: false
 #| warning: false
@@ -14,6 +15,7 @@ library(daymetr)
 ```
 
 #Load data
+
 ```{r}
 #| message: false
 #| warning: false
@@ -25,8 +27,8 @@ submission <- read_csv("../2026dsa_finalproject_group9/data/testing/testing_subm
 
 ```
 
-#Clean data
-##Meta
+#Clean data ##Meta
+
 ```{r}
 meta <- meta %>% 
   mutate(site = substr(site, 1, 4)) %>%  # removing previous crop
@@ -37,6 +39,7 @@ meta_clean <- meta %>%
 ```
 
 ##Soil
+
 ```{r}
 soil_clean <- soil %>% 
   mutate(site = substr(site, 1, 4)) %>% 
@@ -44,6 +47,7 @@ soil_clean <- soil %>%
 ```
 
 #Join datasets
+
 ```{r}
 full_dataset <- submission %>%
   left_join(soil_clean, 
@@ -53,6 +57,7 @@ full_dataset <- submission %>%
 ```
 
 #Add weather data
+
 ```{r}
 full_dataset %>%
   distinct(longitude, latitude) # distinct coordinates
@@ -68,7 +73,9 @@ unique_sites <- full_dataset %>%
   distinct(site, year, latitude, longitude) #selecting unique coordinates & sites to be able to pull from daymet
 unique_sites
 ```
+
 ##Pulling from daymet
+
 ```{r}
 daymet_all <- unique_sites %>% #extracting weather data from daymet
   mutate(weather = pmap(list(.y = year,
@@ -152,8 +159,8 @@ daymet_year <- final_daymet_monthsum %>% #summarizing weather variables by year 
   ungroup()
 daymet_year
 ```
+
 ```{r}
 write_csv(daymet_year,
           "../2026dsa_finalproject_group9/data/testing/weathercombinedtest.csv")
 ```
-

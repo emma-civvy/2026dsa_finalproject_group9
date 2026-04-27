@@ -303,9 +303,22 @@ final_spec %>%
 test_combined_data <- read_csv("../data/testing/weathercombinedtest.csv")
 test_combined_data
 ```
+##Yield predictions
 ```{r}
 predict_mod <- extract_workflow(final_fit) #tried predicting using final fit but it came back with an error and said to do extract workflow then use that output to predict
 
-yield_preds<- predict(predict_mod, test_combined_data)
+yield_preds<- predict(predict_mod, test_combined_data) %>%
+  rename(yield_mg_ha = .pred)
+```
+##Adding to submission csv
+```{r}
+testing_submission <- read_csv("../data/testing/testing_submission.csv")
+testing_submission
+
+test_preds_submission <- testing_submission %>%
+  mutate(yield_mg_ha = yield_preds$yield_mg_ha)
+
+write_csv(test_preds_submission,
+          "../data/testing/testing_submission_final.csv")
 ```
 
