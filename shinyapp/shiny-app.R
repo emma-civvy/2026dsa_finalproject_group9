@@ -7,10 +7,10 @@ library(yardstick)
 # --------------------------------------------------
 # LOAD DATA
 # --------------------------------------------------
-train_df <- read_csv("../data/shinyapp/train-df.csv")
-test_df  <- read_csv("../data/shinyapp/test_df.csv")
-final_df <- read_csv("../data/shinyapp/final_df.csv")
-vi_df    <- read_csv("../data/shinyapp/vi_df.csv")
+train_df <- read_csv("train-df.csv")
+test_df  <- read_csv("test_df.csv")
+final_df <- read_csv("final_df.csv")
+vi_df    <- read_csv("vi_df.csv")
 
 # --------------------------------------------------
 # VARIABLE GROUPS
