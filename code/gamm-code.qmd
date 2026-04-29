@@ -160,16 +160,6 @@ best_rmse_pct_loss <- gam_res %>%
 
 best_rmse_pct_loss
 
-# best rmse within 1 SE
-
-best_rmse_one_std_err <- gam_res %>%
-  select_by_one_std_err(metric = "rmse",
-                        eval_time = 100,
-                        )%>% 
-  mutate(source = "best_rmse_one_std_err")
-
-best_rmse_one_std_err
-
 final_wf <- finalize_workflow(gam_wf, 
                               best_params)
 
